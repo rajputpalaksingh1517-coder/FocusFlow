@@ -1,6 +1,52 @@
 
 <script>
   let studentName = 'Palak'
+  import { supabase } from './lib/supabase.js'
+
+let user = null
+let sessionLoading = true
+
+supabase.auth.getSession().then(({ data, error }) => {
+  if (error) {
+    authMessage = error.message
+  } else {
+    user = data.session?.user ?? null
+  }
+
+  sessionLoading = false
+})
+
+supabase.auth.onAuthStateChange((_event, session) => {
+  user = session?.user ?? null
+})
+let email = ''
+let password = ''
+let authMode = 'signin'
+let authMessage = ''
+let authLoading = false
+async function handleAuth(event) {
+  event.preventDefault()
+  authLoading = true
+  authMessage = ''
+
+  try {
+    const { data, error } = authMode === 'signup'
+      ? await supabase.auth.signUp({ email, password })
+      : await supabase.auth.signInWithPassword({ email, password })
+
+    if (error) throw error
+
+    user = data.user
+    await loadTasks()
+    authMessage = authMode === 'signup'
+      ? 'Account created! Check your email if confirmation is required.'
+      : 'Signed in successfully!'
+  } catch (error) {
+    authMessage = error.message
+  } finally {
+    authLoading = false
+  }
+}
   let newTask = ''
   let newPriority = 'medium'
   let newDueDate = ''
@@ -10,44 +56,108 @@
   let activeFilter = 'all'
   let searchQuery = ''
 
- function saveTasks() {
-  localStorage.setItem(
-    'focusflow-tasks',
-    JSON.stringify(tasks)
+ async function loadTasks() {
+  if (!user) return
+
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    authMessage = error.message
+    return
+  }
+
+  tasks = data.map(task => ({
+    id: task.id,
+    title: task.title,
+    completed: task.completed,
+    priority: task.priority,
+    dueDate: task.due_date ?? ''
+  }))
+}
+ 
+async function addTask() {
+  const title = newTask.trim()
+  if (!title || !user) return
+
+  const { data, error } = await supabase
+    .from('tasks')
+    .insert({
+      user_id: user.id,
+      title,
+      priority: newPriority,
+      due_date: newDueDate || null
+    })
+    .select()
+    .single()
+
+  if (error) {
+    authMessage = error.message
+    return
+  }
+
+  tasks = [
+    {
+      id: data.id,
+      title: data.title,
+      completed: data.completed,
+      priority: data.priority,
+      dueDate: data.due_date ?? ''
+    },
+    ...tasks
+  ]
+
+  newTask = ''
+  newDueDate = ''
+  authMessage = ''
+}
+
+
+  
+async function toggleTask(id) {
+  const task = tasks.find(task => task.id === id)
+  if (!task || !user) return
+
+  const { error } = await supabase
+    .from('tasks')
+    .update({ completed: !task.completed })
+    .eq('id', id)
+    .eq('user_id', user.id)
+
+  if (error) {
+    authMessage = error.message
+    return
+  }
+
+  tasks = tasks.map(task =>
+    task.id === id
+      ? { ...task, completed: !task.completed }
+      : task
   )
 }
-  function addTask() {
-    const title = newTask.trim()
-    if (!title) return
 
-    tasks = [
-      ...tasks,
-      {
-  id: Date.now(),
-  title,
-  completed: false,
-  priority: newPriority,
-  dueDate: newDueDate
+
+  
+async function deleteTask(id) {
+  if (!user) return
+
+  const { error } = await supabase
+    .from('tasks')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', user.id)
+
+  if (error) {
+    authMessage = error.message
+    return
+  }
+
+  tasks = tasks.filter(task => task.id !== id)
 }
-    ]
-saveTasks()
-    newTask = ''
-    newDueDate = ''
-  }
 
-  function toggleTask(id) {
-    tasks = tasks.map(task =>
-      task.id === id
-        ? { ...task, completed: !task.completed }
-        : task
-    )
-    saveTasks()
-  }
-
-  function deleteTask(id) {
-    tasks = tasks.filter(task => task.id !== id)
-    saveTasks()
-  }
 
   $: completedCount = tasks.filter(task => task.completed).length
   $: pendingCount = tasks.length - completedCount
@@ -81,6 +191,50 @@ saveTasks()
 </svelte:head>
 
 <main>
+{#if !user}
+  <section class="tasks">
+    <h2>Welcome to FocusFlow</h2>
+    <p>Sign in to sync your tasks across devices.</p>
+
+    <form onsubmit={handleAuth}>
+      <input
+        type="email"
+        bind:value={email}
+        placeholder="Your email"
+        required
+      />
+
+      <input
+        type="password"
+        bind:value={password}
+        placeholder="Password (at least 6 characters)"
+        minlength="6"
+        required
+      />
+
+      <button class="add-button" type="submit" disabled={authLoading}>
+        {authLoading
+          ? 'Please wait...'
+          : authMode === 'signup'
+            ? 'Create account'
+            : 'Sign in'}
+      </button>
+    </form>
+
+    <button
+      type="button"
+      onclick={() => authMode = authMode === 'signin' ? 'signup' : 'signin'}
+    >
+      {authMode === 'signin'
+        ? 'New here? Create an account'
+        : 'Already registered? Sign in'}
+    </button>
+
+    {#if authMessage}
+      <p>{authMessage}</p>
+    {/if}
+  </section>
+{:else}
   <header class="hero">
     <p class="eyebrow">YOUR PERSONAL WORKSPACE</p>
     <h1>FocusFlow<span>.</span></h1>
@@ -249,6 +403,7 @@ saveTasks()
     <span>FocusFlow</span>
     <span>One step at a time. ✨</span>
   </footer>
+  {/if}
 </main>
 
 <style>
