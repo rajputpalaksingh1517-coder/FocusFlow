@@ -247,7 +247,7 @@ saveTasks()
 
   <footer>
     <span>FocusFlow</span>
-    <span>One step at a time. ✦</span>
+    <span>One step at a time. ✨</span>
   </footer>
 </main>
 
